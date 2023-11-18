@@ -6,7 +6,7 @@ We are going to test deploying usernetes with [Lima](https://lima-vm.io) as [sug
 
 To install I did:
 
-```
+```console
 VERSION=$(curl -fsSL https://api.github.com/repos/lima-vm/lima/releases/latest | jq -r .tag_name)
 wget "https://github.com/lima-vm/lima/releases/download/${VERSION}/lima-${VERSION:1}-$(uname -s)-$(uname -m).tar.gz"
 tar -xzvf lima-0.18.0-Linux-x86_64.tar.gz
@@ -29,47 +29,37 @@ We will make a template that goes off of that!
 ### Control Plane
 
 ```bash
-# if you have usernetes.yaml in share/lima/templates
-limactl start --network=lima:user-v2 --name=vm0 template://usernetes
-
-# otherwise
-limactl start --network=lima:user-v2 --name=vm1 ./usernetes.yaml
+limactl start --network=lima:user-v2 --name=vm0 ./usernetes.yaml
 ```
 
-Note that you can look in `share/lima/templates` to see available templates.
-The first pull of the VM will take a few minutes. To then shell into one:
+Then shell in!
 
 ```bash
-# Give access to the VM
 cp ./scripts/* /tmp/lima
 limactl shell vm0
 ```
 
-Then inside the vm, run the contents of the rootless and control-plane scripts.
+Install docker in user space, and setup usernetes. You can do this with the control plane script.
 
 ```bash
-/bin/bash /tmp/lima/rootless.sh
-/bin/bash /tmp/lima/001-control-plane.sh
+/bin/bash /tmp/lima/control-plane.sh
 ```
+
+The above will install things in user space (as you) and create a join-command in /tmp/lima (that has write) that the worker nodes can copy over.
 
 ### Worker
 
 Let's make one worker.
 
 ```bash
-# if you have the usernetes.yaml in share/lima/templates
-limactl start --network=lima:user-v2 --name=vm1 template://usernetes
-
-# otherwise
 limactl start --network=lima:user-v2 --name=vm1 ./usernetes.yaml
 ```
 
-We already copied scripts, so let's shell inside:
+We can do the same procedure to shell inside, and run the worker init script.
 
 ```bash
 limactl shell vm1
-/bin/bash /tmp/lima/rootless.sh
-/bin/bash /tmp/lima/001-control-plane.sh
+/bin/bash /tmp/lima/worker-node.sh
 ```
 
 Then shell in to the vm0 again.
@@ -106,7 +96,9 @@ my-echo-656f6949c4-v8b6q   1/1     Running   0          9s
 
 Woo! I think that's a tiny win for today :)
 
-## Stopping
+## Clean Up
+
+You can stop:
 
 ```bash
 limactl stop vm0
@@ -114,12 +106,16 @@ limactl stop vm1
 ```
 
 I haven't played around with restarting - likely services would need to be restarted, etc.
-
-## Return...
-
-If you come back to it later you can start by name:
+If you come back:
 
 ```bash
 limactl start --network=lima:user-v2 vm0
 limactl start --network=lima:user-v2 vm1
+```
+
+or just nuke it!
+
+```bash
+limactl delete vm0
+limactl delete vm1
 ```

@@ -1,6 +1,11 @@
 #!/bin/bash
 set -euo pipefail
 
+sudo service containerd start
+dockerd-rootless-setuptool.sh install
+echo "export PATH=/usr/bin:$PATH" >> ~/.bashrc
+echo "export DOCKER_HOST=unix://${XDG_RUNTIME_DIR}/docker.sock" >> ~/.bashrc
+
 # This is probably excessive
 systemctl --user enable docker.service
 systemctl --user start docker.service
@@ -13,10 +18,6 @@ docker run hello-world
 # Install usernetes again
 sudo chown -R $USER /opt
 
-# Adding this in unecessary places...
-sudo loginctl enable-linger $(whoami)
-sudo systemctl daemon-reload
-
 # git clone -b g2 https://github.com/AkihiroSuda/usernetes /opt/usernetes
 git clone https://github.com/rootless-containers/usernetes /opt/usernetes || echo "Already cloned"
 
@@ -28,6 +29,6 @@ cd /opt/usernetes
 cp /tmp/lima/join-command /opt/usernetes/join-command
 
 # This didn't work the first time?
-make -C /opt/usernetes up kubeadm-join || make -C /opt/usernetes up kubeadm-join
+make -C /opt/usernetes up kubeadm-join
 sudo loginctl enable-linger $(whoami)
 loginctl enable-linger $USER
