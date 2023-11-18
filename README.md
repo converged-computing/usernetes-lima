@@ -59,7 +59,7 @@ We can do the same procedure to shell inside, and run the worker init script.
 
 ```bash
 limactl shell vm1
-/bin/bash ./scripts/worker-node.sh
+/bin/bash /tmp/lima/worker-node.sh
 ```
 
 Then shell in to the vm0 again.

@@ -1,6 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 
+sudo service containerd start
 dockerd-rootless-setuptool.sh install
 echo "export PATH=/usr/bin:$PATH" >> ~/.bashrc
 echo "export DOCKER_HOST=unix://${XDG_RUNTIME_DIR}/docker.sock" >> ~/.bashrc
@@ -26,7 +27,6 @@ cd /opt/usernetes
 # Note that "join-command" is hard coded into the Makefile, and expected to be there
 # This needs to be run first so it's in our user home
 cp /tmp/lima/join-command /opt/usernetes/join-command
-sudo service containerd start
 
 # This didn't work the first time?
 make -C /opt/usernetes up kubeadm-join
