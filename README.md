@@ -29,43 +29,78 @@ We will make a template that goes off of that!
 ### Control Plane
 
 ```bash
-limactl start --network=lima:user-v2 --name=vm0 ./usernetes.yaml
+limactl start --network=lima:user-v2 --name=control-plane ./usernetes-control-plane.yaml
 ```
 
-Then shell in!
+You'll see an instruction to copy the contents of join-command into [usernetes-worker.yaml](usernetes-worker.yaml).
 
-```bash
-cp ./scripts/* /tmp/lima
-limactl shell vm0
+```console
+INFO[0444] Message from the instance "control-plane":   
+To setup a worker node, copy the contents of /home/vanessa/.lima/control-plane/join-command into the usernetes-worker.yaml
+block **but do not commit**
 ```
 
-Install docker in user space, and setup usernetes. You can do this with the control plane script.
-
-```bash
-/bin/bash /tmp/lima/control-plane.sh
-```
-
-The above will install things in user space (as you) and create a join-command in /tmp/lima (that has write) that the worker nodes can copy over.
+This should be copied into the last user block to write `/opt/usernetes/join-command`.
 
 ### Worker
 
-Let's make one worker.
+Note that you'll need the [rust version](https://gitlab.com/virtio-fs/virtiofsd) of virtiofsd for this to work (the old C version with QEMU did not work for me). 
 
 ```bash
-limactl start --network=lima:user-v2 --name=vm1 ./usernetes.yaml
+# This is in the PWD
+git clone https://gitlab.com/virtio-fs/virtiofsd 
+cd virtiofsd 
+sudo apt install libcap-ng-dev libseccomp-dev
 ```
 
-We can do the same procedure to shell inside, and run the worker init script.
+Then build with cargo.
 
 ```bash
-limactl shell vm1
-/bin/bash /tmp/lima/worker-node.sh
+cargo build --release
 ```
 
-Then shell in to the vm0 again.
+Then I replaced it.
+
+```
+sudo mv /usr/lib/qemu/virtiofsd /usr/lib/qemu/virtiofsd-c
+sudo mv virtiofsd/target/release/virtiofsd /usr/lib/qemu/virtiofsd
+```
+
+I also did:
+
+```
+sudo usermod -aG kvm $USER
+```
+
+After copying the join command:
 
 ```bash
-limactl shell vm0
+mkdir -p /tmp/lima
+cp /home/vanessa/.lima/control-plane/join-command /tmp/lima/join-command
+```
+
+let's make one worker.
+
+```bash
+limactl start --network=lima:user-v2 --name=usernetes-worker ./usernetes-worker.yaml
+```
+
+We need to run join manually (containerd seems to have trouble starting before then)
+
+```bash
+limactl shell --workdir /opt/usernetes usernetes-worker
+cd /opt/usernetes
+sudo systemctl containerd status
+sudo systemctl status containerd
+sudo systemctl start containerd
+make -C /opt/usernetes up kubeadm-join
+```
+
+Note that sometimes I need to run this twice.
+Then exit and shell in to the control-plane again.
+
+```bash
+limactl shell control-plane
 ```
 
 The `KUBECONFIG` should be exported so you can now see the node that was registered:
