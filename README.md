@@ -129,28 +129,28 @@ NAME                       READY   STATUS    RESTARTS   AGE
 my-echo-656f6949c4-v8b6q   1/1     Running   0          9s
 ```
 
-Woo! I think that's a tiny win for today :)
+Woot! 
 
 ## Clean Up
 
 You can stop:
 
 ```bash
-limactl stop vm0
-limactl stop vm1
+limactl stop control-plane
+limactl stop usernetes-worker
 ```
 
 I haven't played around with restarting - likely services would need to be restarted, etc.
 If you come back:
 
 ```bash
-limactl start --network=lima:user-v2 vm0
-limactl start --network=lima:user-v2 vm1
+limactl start --network=lima:user-v2 control-plane
+limactl start --network=lima:user-v2 usernetes-worker
 ```
 
 or just nuke it!
 
 ```bash
-limactl delete vm0
-limactl delete vm1
+limactl delete control-plane
+limactl delete usernetes-worker
 ```
