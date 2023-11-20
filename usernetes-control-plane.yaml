@@ -1,0 +1,187 @@
+# This template requires Lima v0.11.1 or later.
+
+images:
+- location: "https://dl.rockylinux.org/pub/rocky/9.2/images/x86_64/Rocky-9-GenericCloud-Base-9.2-20230513.0.x86_64.qcow2"
+  arch: "x86_64"
+  digest: "sha256:50510f98abe1b20a548102a05a9be83153b0bf634fc502d5c8d1f508f6de1430"
+- location: "http://dl.rockylinux.org/pub/rocky/9.2/images/aarch64/Rocky-9-GenericCloud-Base-9.2-20230513.0.aarch64.qcow2"
+  arch: "aarch64"
+  digest: "sha256:eb7752c0be359007ad470e43b0d8c921e31d3ad7d4bcec9b6a2b18a8d17c05d8"
+
+# Allow a shared location in /tmp/lima to write into VMs
+mounts:
+- location: "~"
+- location: "/tmp/lima"
+  writable: true
+  
+# containerd is managed by k3s, not by Lima, so the values are set to false here.
+containerd:
+  system: false
+  user: false
+
+# TODO I'm not sure if this is working - jq is not in the container
+provision:
+- mode: system
+  script: |
+    #!/bin/bash
+    set -euo pipefail
+    dnf update -y
+    dnf group install -y "Development Tools"
+    dnf config-manager --set-enabled powertools
+    dnf install -y epel-release
+    dnf install -y \
+      libevent-devel \
+      czmq-devel \
+      jansson-devel \
+      lz4-devel \
+      sqlite-devel \
+      ncurses-devel \
+      libarchive-devel \
+      libxml2-devel \
+      yaml-cpp-devel \
+      nfs-utils \
+      python3-cffi \
+      python3-yaml \
+      python3-jsonschema \
+      python3-sphinx \
+      python3-docutils \
+      syslog \
+      jq \
+      curl
+
+- mode: system
+  script: |
+    #!/bin/bash
+    set -euo pipefail
+    dnf -q rq --groupmember rsyslog
+    dnf install -y grubby jq
+    grubby --update-kernel=ALL --args="systemd.unified_cgroup_hierarchy=1"
+
+- mode: system
+  script: |
+    #!/bin/bash
+    set -euo pipefail
+    touch /tmp/lima/test.txt
+    mkdir -p /etc/systemd/system/user@.service.d
+    cat <<EOF | tee /etc/systemd/system/user@.service.d/delegate.conf
+    [Service]
+    Delegate=cpu cpuset io memory pids
+    EOF
+    systemctl daemon-reload
+
+- mode: system
+  script: |
+    #!/bin/bash
+    set -euo pipefail
+    touch /tmp/lima/test.txt
+    dnf config-manager --add-repo=https://download.docker.com/linux/centos/docker-ce.repo
+    dnf -y install docker-ce
+    systemctl disable --now docker
+    modprobe ip_tables
+    tee /etc/modules-load.d/usernetes.conf <<EOF >/dev/null
+    br_netfilter
+    vxlan
+    EOF
+    systemctl restart systemd-modules-load.service
+
+- mode: system
+  script: |
+    #!/bin/bash
+    set -euo pipefail
+    echo "net.ipv4.conf.default.rp_filter = 2" > /tmp/99-usernetes.conf
+    mv /tmp/99-usernetes.conf /etc/sysctl.d/99-usernetes.conf
+    sysctl --system
+
+# kernel modules
+- mode: system
+  script: |
+    #!/bin/bash
+    set -euo pipefail
+    modprobe vxlan
+    systemctl daemon-reload
+    echo "net.ipv4.conf.default.rp_filter=2" | tee -a /etc/sysctl.conf
+    sysctl -p
+    systemctl daemon-reload
+
+# kernel modules
+- mode: system
+  script: |
+    #!/bin/bash
+    set -euo pipefail
+    touch /tmp/lima/test.txt
+    cd /tmp
+    curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+    chmod +x ./kubectl
+    mv ./kubectl /usr/bin/kubectl
+    cd -
+    service containerd start
+
+# This is the setup for the control plane
+- mode: user
+  script: |
+    #!/bin/bash
+    set -eux -o pipefail
+    dockerd-rootless-setuptool.sh install
+    echo "export PATH=/usr/bin:$PATH" >> ~/.bashrc
+    echo "export DOCKER_HOST=unix://${XDG_RUNTIME_DIR}/docker.sock" >> ~/.bashrc
+    sudo service containerd start
+    sleep 5
+    loginctl enable-linger $USER
+    systemctl --user enable docker.service
+    systemctl --user start docker.service
+    sudo loginctl enable-linger $(whoami)
+    sudo dnf install -y jq
+    docker run hello-world
+    sudo chown -R $USER /opt
+    git clone https://github.com/rootless-containers/usernetes /opt/usernetes
+    echo "Contents of /opt/usernetes"
+    ls /opt/usernetes
+    cd /opt/usernetes
+    make up
+    sleep 10
+    make kubeadm-init
+    make install-flannel
+    sleep 5
+    make kubeconfig
+    export KUBECONFIG=/opt/usernetes/kubeconfig
+    kubectl get pods -A
+    sleep 5
+    make join-command
+    echo "export KUBECONFIG=/opt/usernetes/kubeconfig" >> ~/.bashrc
+    sudo loginctl enable-linger $(whoami)
+    loginctl enable-linger $USER
+
+probes:
+- script: |
+    #!/bin/bash
+    set -eux -o pipefail
+    if ! timeout 30s bash -c "until test -f /usr/bin/kubectl; do sleep 3; done"; then
+            echo >&2 "kubectl is not added yet"
+            exit 1
+    else
+       sleep 5
+    fi
+  hint: |
+    kubectl has been installed.
+- script: |
+    #!/bin/bash
+    set -eux -o pipefail
+    if ! timeout 30s bash -c "until test -f /opt/usernetes/kubeconfig; do sleep 3; done"; then
+            echo >&2 "kubeconfig is generated"
+            exit 1
+    else
+       sleep 5
+    fi
+  hint: |
+    kubectl has been installed.
+
+copyToHost:
+- guest: "/opt/usernetes/join-command"
+  host: "{{.Dir}}/join-command"
+  deleteOnStop: true
+- guest: "/opt/usernetes/kubeconfig"
+  host: "{{.Dir}}/kubeconfig.yaml"
+  deleteOnStop: true
+message: |
+  To setup a worker node, copy the contents of {{ .Dir }}/join-command into the usernetes-worker.yaml
+  block **but do not commit**

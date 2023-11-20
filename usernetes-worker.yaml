@@ -10,9 +10,11 @@ images:
 
 # Allow a shared location in /tmp/lima to write into VMs
 mounts:
-- location: "~"
 - location: "/tmp/lima"
   writable: true
+
+# virtiofs ensures that the mount is done at the onset so we see the files
+mountType: "virtiofs"
   
 # containerd is managed by k3s, not by Lima, so the values are set to false here.
 containerd:
@@ -53,6 +55,7 @@ provision:
   script: |
     #!/bin/bash
     set -euo pipefail
+    ls /tmp/lima
     dnf -q rq --groupmember rsyslog
     dnf install -y grubby jq
     grubby --update-kernel=ALL --args="systemd.unified_cgroup_hierarchy=1"
@@ -113,26 +116,43 @@ provision:
     cd -
     service containerd start
 
+# This is the setup for the worker node
+- mode: user
+  script: |
+    #!/bin/bash
+    set -eux -o pipefail
+    sudo service containerd start
+    sudo service containerd status
+    dockerd-rootless-setuptool.sh install
+    echo "export PATH=/usr/bin:$PATH" >> ~/.bashrc
+    echo "export DOCKER_HOST=unix://${XDG_RUNTIME_DIR}/docker.sock" >> ~/.bashrc
+    systemctl --user enable docker.service
+    systemctl --user start docker.service
+    sudo loginctl enable-linger $(whoami)
+    loginctl enable-linger $USER
+    docker run hello-world
+    sudo chown -R $USER /opt
+    git clone https://github.com/rootless-containers/usernetes /opt/usernetes
+    ls /opt/usernetes
+    cd /opt/usernetes
+    sudo service containerd start
+    sudo service containerd status
+    cp /tmp/lima/join-command ./join-command
+    # TODO run this interactively to test
+    # make -C /opt/usernetes up kubeadm-join
+    sudo loginctl enable-linger $(whoami)
+    loginctl enable-linger $USER
+    touch /tmp/finished.txt
+
 probes:
 - script: |
     #!/bin/bash
     set -eux -o pipefail
-    if ! timeout 30s bash -c "until test -f /usr/bin/kubectl; do sleep 3; done"; then
+    if ! timeout 30s bash -c "until test -f /tmp/finished.txt; do sleep 3; done"; then
             echo >&2 "kubectl is not added yet"
             exit 1
     else
        sleep 5
     fi
   hint: |
-    kubectl has been installed.
-
-#copyToHost:
-#- guest: "/etc/rancher/k3s/k3s.yaml"
-#  host: "{{.Dir}}/copied-from-guest/kubeconfig.yaml"
-#  deleteOnStop: true
-#message: |
-#  To run `kubectl` on the host (assumes kubectl is installed), run the following commands:
-#  ------
-#  export KUBECONFIG="{{.Dir}}/copied-from-guest/kubeconfig.yaml"
-#  kubectl ...
-#  ------
+    usernetes is finished.
